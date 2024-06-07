@@ -7,6 +7,7 @@ let canvas;
 let ctxt;
 let grid;
 let frame;
+let step = 0;
 
 window.onload = () => {
     canvas = document.getElementById("canvas");
@@ -34,6 +35,11 @@ function loop() {
         grid.update();
 
         grid.render(ctxt);
+
+        if(step === 300) {
+            return;
+        }
+        step++
     }
 
     frame++;
@@ -50,9 +56,9 @@ class Grid {
     constructor(size) {
         this.size = size;
         this.grid = [];
-        for (let i = 0; i < size; i++) {
+        for (let i = 0; i < size+1; i++) {
             let row = [];
-            for (let j = 0; j < size; j++) {
+            for (let j = 0; j < size+1; j++) {
                 let state = 0b0000;
                 if(i > 0) {
                     state |= 0b1000;
@@ -60,10 +66,10 @@ class Grid {
                 if(j > 0) {
                     state |= 0b0001;
                 }
-                if(i < size-1) {
+                if(i < size) {
                     state |= 0b0010;
                 }
-                if(j < size-1) {
+                if(j < size) {
                     state |= 0b0100;
                 }
 
@@ -77,10 +83,11 @@ class Grid {
 
     render(ctxt) {
         ctxt.clearRect(0, 0, canvas.width, canvas.height);
+        ctxt.lineWidth = 1;
 
         ctxt.beginPath();
-        for (let i = 0; i < this.size + 1; i += 2) {
-            for (let j = 0; j < this.size + 1; j += 2) {
+        for (let i = 0; i < this.grid.length + 1; i += 2) {
+            for (let j = 0; j < this.grid.length + 1; j += 2) {
                 ctxt.moveTo(CELL_SIZE * i, 0);
                 ctxt.lineTo(CELL_SIZE * i, canvas.height);
                 ctxt.moveTo(0, CELL_SIZE * i);
@@ -106,9 +113,15 @@ class Grid {
     }
 
     update() {
+        let nextGrid = this.grid.map(row => row.slice());
+        let edgeCaseGrid = this.grid.map(row => row.map(() => 0b0));
         for(let region of this.regions) {
-            region.update(this.grid);
+            region.computeEdgeCase(this.grid, edgeCaseGrid);
         }
+        for(let region of this.regions) {
+            region.update(this.grid, nextGrid, edgeCaseGrid);
+        }
+        this.grid = nextGrid;
     }
 }
 
@@ -126,6 +139,7 @@ class Region {
 
     render(ctxt) {
         ctxt.fillStyle = `hsl(${this.hue}, 100%, 50%)`;
+        ctxt.lineWidth = 3;
 
         ctxt.beginPath();
         ctxt.moveTo(this.points[0].x * CELL_SIZE, this.points[0].y * CELL_SIZE);
@@ -133,12 +147,34 @@ class Region {
             ctxt.lineTo(this.points[i].x * CELL_SIZE, this.points[i].y * CELL_SIZE);
         }
         ctxt.closePath();
-        ctxt.fill()
+        // ctxt.fill()
         ctxt.stroke()
+
+        for(let point of this.points) {
+            ctxt.beginPath();
+            ctxt.arc(point.x * CELL_SIZE, point.y * CELL_SIZE, 5, 0, 2 * Math.PI);
+            ctxt.fill();
+        }
     }
 
-    update(grid) {
-        this.points = this.points.flatMap(p => p.generateNext(grid));
+    computeEdgeCase(grid1, grid2) {
+        for(let point of this.points) {
+            point.computeEdgeCase(grid1, grid2);
+        }
+        for(let i=0;i<grid2.length;i++) {
+            for(let j=0;j<grid2[i].length;j++) {
+                // console.log("abc!", grid2[i][j])
+                if(grid2[i][j] === 0b1) {
+                    grid2[i][j] = grid2[i][j] << 1;
+
+                    // console.log("a", grid2[i][j])
+                }
+            }
+        }
+    }
+
+    update(grid1, grid2, grid3) {
+        this.points = this.points.flatMap(p => p.generateNext(grid1, grid2, grid3));
         for(let i=this.points.length-1;i>=0;i--) {
             let j = (i - 1 + this.points.length) % this.points.length;
             if(this.points[i].equalTo(this.points[j])) {
@@ -158,68 +194,103 @@ class RegionPoint {
         return (this.x === other.x && this.y === other.y);
     }
 
-    generateNext(grid) {
-        let state = grid[this.y][this.x];
-        grid[this.y][this.x] &= 0b0000;
+    computeEdgeCase(grid1, grid2) {
+        let state = grid1[this.y][this.x];
+
+        // if((state & 0b1000) === 0b1000) {
+        //     grid2[this.y-1][this.x] |= 0b1;
+        // }
+        // if((state & 0b0100) === 0b0100) {
+        //     grid2[this.y][this.x+1] |= 0b1;
+        // }
+        // if((state & 0b0010) === 0b0010) {
+        //     grid2[this.y+1][this.x] |= 0b1;
+        // }
+        // if((state & 0b0001) === 0b0001) {
+        //     grid2[this.y][this.x-1] |= 0b1;
+        // }
+
+        grid2[this.y][this.x] |= 0b1;
+    }
+
+    generateNext(grid1, grid2, grid3) {
+        let state = grid1[this.y][this.x];
+        grid2[this.y][this.x] &= 0b0000;
 
         switch (state) {
         case 0b0000:
             return [this];
         case 0b0001:
-            grid[this.y][this.x-1] &= 0b1011;
-            return [new RegionPoint(this.x-1, this.y)];
+            grid2[this.y][this.x-1] &= 0b1011;
+            return [new RegionPoint(this.x-1, this.y), this];
         case 0b0010:
-            grid[this.y+1][this.x] &= 0b0111;
-            return [new RegionPoint(this.x, this.y+1)];
+            grid2[this.y+1][this.x] &= 0b0111;
+            return [new RegionPoint(this.x, this.y+1), this];
         case 0b0011:
-            grid[this.y+1][this.x] &= 0b0111;
-            grid[this.y][this.x-1] &= 0b1011;
-            return [new RegionPoint(this.x, this.y+1), new RegionPoint(this.x-1, this.y)];
+            grid2[this.y+1][this.x] &= 0b0111;
+            grid2[this.y][this.x-1] &= 0b1011;
+            if(grid3[this.y][this.x] === 0b11) {
+                return [new RegionPoint(this.x, this.y+1), this, new RegionPoint(this.x-1, this.y)];
+            } else {
+                return [new RegionPoint(this.x, this.y+1), new RegionPoint(this.x-1, this.y)];
+            }
         case 0b0100:
-            grid[this.y][this.x+1] &= 0b1110;
-            return [new RegionPoint(this.x+1, this.y)];
+            grid2[this.y][this.x+1] &= 0b1110;
+            return [new RegionPoint(this.x+1, this.y), this];
         case 0b0101:
-            grid[this.y][this.x+1] &= 0b1110;
-            grid[this.y][this.x-1] &= 0b1011;
-            return [new RegionPoint(this.x+1, this.y), new RegionPoint(this.x-1, this.y)];
+            grid2[this.y][this.x+1] &= 0b1110;
+            grid2[this.y][this.x-1] &= 0b1011;
+            return [new RegionPoint(this.x+1, this.y), this, new RegionPoint(this.x-1, this.y)];
         case 0b0110:
-            grid[this.y][this.x+1] &= 0b1110;
-            grid[this.y+1][this.x] &= 0b0111;
-            return [new RegionPoint(this.x+1, this.y), new RegionPoint(this.x, this.y+1)];
+            grid2[this.y][this.x+1] &= 0b1110;
+            grid2[this.y+1][this.x] &= 0b0111;
+            if(grid3[this.y][this.x] === 0b11) {
+                return [new RegionPoint(this.x+1, this.y), this, new RegionPoint(this.x, this.y+1)];
+            }else {
+                return [new RegionPoint(this.x+1, this.y), new RegionPoint(this.x, this.y+1)];
+            }
         case 0b0111:
-            grid[this.y][this.x+1] &= 0b1110;
-            grid[this.y+1][this.x] &= 0b0111;
-            grid[this.y][this.x-1] &= 0b1011;
+            grid2[this.y][this.x+1] &= 0b1110;
+            grid2[this.y+1][this.x] &= 0b0111;
+            grid2[this.y][this.x-1] &= 0b1011;
             return [new RegionPoint(this.x+1, this.y), new RegionPoint(this.x, this.y+1), new RegionPoint(this.x-1, this.y)];
         case 0b1000:
-            grid[this.y-1][this.x] &= 0b1101;
-            return [new RegionPoint(this.x, this.y-1)];
+            grid2[this.y-1][this.x] &= 0b1101;
+            return [new RegionPoint(this.x, this.y-1), this];
         case 0b1001:
-            grid[this.y][this.x-1] &= 0b1011;
-            grid[this.y-1][this.x] &= 0b1101;
-            return [new RegionPoint(this.x-1, this.y), new RegionPoint(this.x, this.y-1)];
+            grid2[this.y][this.x-1] &= 0b1011;
+            grid2[this.y-1][this.x] &= 0b1101;
+            if(grid3[this.y][this.x] === 0b11) {
+                return [new RegionPoint(this.x-1, this.y), this, new RegionPoint(this.x, this.y-1)];
+            }else {
+                return [new RegionPoint(this.x-1, this.y), new RegionPoint(this.x, this.y-1)];
+            }
         case 0b1010:
-            grid[this.y+1][this.x] &= 0b0111;
-            grid[this.y-1][this.x] &= 0b1101;
-            return [new RegionPoint(this.x, this.y+1), new RegionPoint(this.x, this.y-1)];
+            grid2[this.y+1][this.x] &= 0b0111;
+            grid2[this.y-1][this.x] &= 0b1101;
+            return [new RegionPoint(this.x, this.y+1), this, new RegionPoint(this.x, this.y-1)];
         case 0b1011:
-            grid[this.y+1][this.x] &= 0b0111;
-            grid[this.y][this.x-1] &= 0b1011;
-            grid[this.y-1][this.x] &= 0b1101;
+            grid2[this.y+1][this.x] &= 0b0111;
+            grid2[this.y][this.x-1] &= 0b1011;
+            grid2[this.y-1][this.x] &= 0b1101;
             return [new RegionPoint(this.x, this.y+1), new RegionPoint(this.x-1, this.y), new RegionPoint(this.x, this.y-1)];
         case 0b1100:
-            grid[this.y-1][this.x] &= 0b1101;
-            grid[this.y][this.x+1] &= 0b1110;
-            return [new RegionPoint(this.x, this.y-1), new RegionPoint(this.x+1, this.y)];
+            grid2[this.y-1][this.x] &= 0b1101;
+            grid2[this.y][this.x+1] &= 0b1110;
+            if(grid3[this.y][this.x] === 0b11) {
+                return [new RegionPoint(this.x, this.y-1), this, new RegionPoint(this.x+1, this.y)];
+            }else {
+                return [new RegionPoint(this.x, this.y-1), new RegionPoint(this.x+1, this.y)];
+            }
         case 0b1101:
-            grid[this.y][this.x-1] &= 0b1011;
-            grid[this.y-1][this.x] &= 0b1101;
-            grid[this.y][this.x+1] &= 0b1110;
+            grid2[this.y][this.x-1] &= 0b1011;
+            grid2[this.y-1][this.x] &= 0b1101;
+            grid2[this.y][this.x+1] &= 0b1110;
             return [new RegionPoint(this.x-1, this.y), new RegionPoint(this.x, this.y-1), new RegionPoint(this.x+1, this.y)];
         case 0b1110:
-            grid[this.y-1][this.x] &= 0b1101;
-            grid[this.y][this.x+1] &= 0b1110;
-            grid[this.y+1][this.x] &= 0b0111;
+            grid2[this.y-1][this.x] &= 0b1101;
+            grid2[this.y][this.x+1] &= 0b1110;
+            grid2[this.y+1][this.x] &= 0b0111;
             return [new RegionPoint(this.x, this.y-1), new RegionPoint(this.x+1, this.y), new RegionPoint(this.x, this.y+1)];
 
         case 0b1111:
